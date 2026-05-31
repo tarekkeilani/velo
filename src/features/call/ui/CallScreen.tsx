@@ -9,6 +9,7 @@ import { CallState } from '../model/types';
 import { useLocalMedia } from '../hooks/useLocalMedia';
 import { useCall } from '../hooks/useCall';
 import { ControlButton } from './CallControls';
+import { SafetyCode } from './SafetyCode';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Call'>;
 
@@ -23,7 +24,7 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Call'>;
 export function CallScreen({ route, navigation }: Props) {
   const { roomCode, role } = route.params;
   const local = useLocalMedia();
-  const { state, remoteStream, hangUp } = useCall({
+  const { state, remoteStream, safetyCode, hangUp } = useCall({
     roomCode,
     role,
     localStream: local.stream,
@@ -93,9 +94,9 @@ export function CallScreen({ route, navigation }: Props) {
           <Text variant="caption" style={styles.onVideoMuted}>
             {statusLabel(state)}
           </Text>
-          <Text variant="caption" style={styles.onVideoMuted}>
-            Safety code (M3): — — —
-          </Text>
+          {state === 'connected' || state === 'negotiating' ? (
+            <SafetyCode code={safetyCode} />
+          ) : null}
         </View>
 
         <View style={styles.controls}>

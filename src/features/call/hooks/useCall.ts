@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { MediaStream, RTCPeerConnection } from 'react-native-webrtc';
+import { sha256 } from 'js-sha256';
 import { useServices } from '@shared/lib/services';
 import { env } from '@app/config/env';
+import { deriveSafetyCode } from '../lib/sas';
+import { extractDtlsFingerprint } from '../lib/fingerprint';
 import {
   CallRole,
   CallState,
@@ -35,6 +38,8 @@ import {
 export type Call = {
   state: CallState;
   remoteStream: MediaStream | null;
+  /** SAS safety code for out-of-band verification; null until negotiated. */
+  safetyCode: string | null;
   hangUp: () => void;
 };
 
@@ -65,6 +70,7 @@ export function useCall({ roomCode, role, localStream }: Params): Call {
   const { supabase } = useServices();
   const [state, setState] = useState<CallState>('idle');
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
+  const [safetyCode, setSafetyCode] = useState<string | null>(null);
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const channelRef = useRef<SignalingChannel | null>(null);
@@ -106,6 +112,17 @@ export function useCall({ roomCode, role, localStream }: Params): Call {
         await pc.addIceCandidate(toRTCIceCandidate(candidate));
       }
       pendingIce.current = [];
+    };
+
+    // Once both descriptions exist we hold both DTLS fingerprints; hash them
+    // into the SAS code both users compare aloud. SHA-256 keeps it
+    // collision-resistant so a MITM can't forge a matching code.
+    const computeSafety = () => {
+      const localFp = extractDtlsFingerprint(pc.localDescription?.sdp ?? '');
+      const remoteFp = extractDtlsFingerprint(pc.remoteDescription?.sdp ?? '');
+      if (localFp && remoteFp) {
+        setSafetyCode(deriveSafetyCode(localFp, remoteFp, sha256));
+      }
     };
 
     const makeOffer = async () => {
@@ -152,6 +169,7 @@ export function useCall({ roomCode, role, localStream }: Params): Call {
             kind: 'answer',
             description: serializeDescription(answer),
           });
+          computeSafety();
           break;
         }
         case 'answer': {
@@ -163,6 +181,7 @@ export function useCall({ roomCode, role, localStream }: Params): Call {
           );
           remoteReady.current = true;
           await drainIce();
+          computeSafety();
           break;
         }
         case 'ice': {
@@ -248,5 +267,5 @@ export function useCall({ roomCode, role, localStream }: Params): Call {
     };
   }, [localStream, roomCode, role, supabase, cleanup]);
 
-  return { state, remoteStream, hangUp };
+  return { state, remoteStream, safetyCode, hangUp };
 }
