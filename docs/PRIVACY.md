@@ -52,4 +52,4 @@ Velo is not directed to children under 13 (or the minimum age in your region).
 
 ## Contact
 
-Questions about this policy: **<your-email@example.com>**  _(replace before publishing)_
+Questions about this policy: **tarek.keilani@gmail.com**

@@ -3,7 +3,7 @@ import { Pressable, Share, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { RTCView } from 'react-native-webrtc';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { Text } from '@shared/ui';
+import { Button, Text } from '@shared/ui';
 import { RootStackParamList } from '@app/navigation/types';
 import { CallState } from '../model/types';
 import { useLocalMedia } from '../hooks/useLocalMedia';
@@ -31,6 +31,7 @@ export function CallScreen({ route, navigation }: Props) {
   });
 
   const connected = state === 'connected' && remoteStream;
+  const finished = state === 'ended' || state === 'failed';
 
   const end = () => {
     hangUp();
@@ -140,6 +141,21 @@ export function CallScreen({ route, navigation }: Props) {
           <ControlButton icon="📞" label="Hang up" danger onPress={end} />
         </View>
       </SafeAreaView>
+
+      {/* Call over (peer left, failed, or timed out): clear message + exit. */}
+      {finished ? (
+        <View style={styles.endOverlay}>
+          <Text variant="title" style={styles.endTitle}>
+            {state === 'ended' ? 'Call ended' : "Couldn't connect"}
+          </Text>
+          {statusDetail ? (
+            <Text tone="muted" style={styles.endSubtitle}>
+              {statusDetail}
+            </Text>
+          ) : null}
+          <Button label="Back to home" onPress={end} style={styles.endButton} />
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -206,4 +222,19 @@ const styles = StyleSheet.create({
     gap: 16,
     paddingVertical: 16,
   },
+  endOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.88)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 32,
+    gap: 12,
+  },
+  endTitle: { color: '#fff', textAlign: 'center' },
+  endSubtitle: { textAlign: 'center' },
+  endButton: { marginTop: 12, alignSelf: 'stretch' },
 });

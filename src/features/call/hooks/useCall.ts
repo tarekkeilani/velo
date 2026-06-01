@@ -40,6 +40,8 @@ export type Call = {
 };
 
 const ICE_GATHER_TIMEOUT_MS = 5000;
+// If the call hasn't connected within this window, give up with a clear error.
+const CONNECT_TIMEOUT_MS = 60000;
 
 type PeerEvents = {
   addEventListener(t: 'track', cb: (e: { streams: MediaStream[] }) => void): void;
@@ -93,6 +95,10 @@ export function useCall({ roomCode, role, localStream }: Params): Call {
     channelRef.current = channel;
 
     const events = pc as unknown as PeerEvents;
+
+    // Local-to-this-effect call lifecycle flags.
+    let connectedOnce = false;
+    let connectTimer: ReturnType<typeof setTimeout> | undefined;
 
     // Resolve once ICE gathering finishes (or after a fallback timeout, so a
     // single stuck candidate can't block the whole exchange).
@@ -151,6 +157,10 @@ export function useCall({ roomCode, role, localStream }: Params): Call {
           setStatusDetail('Connecting media…');
           break;
         case 'connected':
+          connectedOnce = true;
+          if (connectTimer) {
+            clearTimeout(connectTimer);
+          }
           setState('connected');
           setStatusDetail('');
           break;
@@ -181,8 +191,9 @@ export function useCall({ roomCode, role, localStream }: Params): Call {
       }
 
       if (!peer || !peer.desc || remoteApplied.v) {
-        if (!peer) {
-          setState(prev => (prev === 'connected' ? 'ended' : prev));
+        if (!peer && connectedOnce) {
+          setState('ended');
+          setStatusDetail('The other person left.');
         }
         return;
       }
@@ -226,8 +237,21 @@ export function useCall({ roomCode, role, localStream }: Params): Call {
         }
       });
 
+    // Give up if the call never connects (peer never joined, or NAT blocked it).
+    connectTimer = setTimeout(() => {
+      if (!disposed && !connectedOnce) {
+        setState('failed');
+        setStatusDetail(
+          "Couldn't connect — they may not have joined, or the network blocked the call.",
+        );
+      }
+    }, CONNECT_TIMEOUT_MS);
+
     return () => {
       disposed = true;
+      if (connectTimer) {
+        clearTimeout(connectTimer);
+      }
       cleanup();
     };
   }, [localStream, roomCode, role, supabase, cleanup]);
