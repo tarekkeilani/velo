@@ -3,14 +3,11 @@ import { MediaStream, RTCPeerConnection } from 'react-native-webrtc';
 import { sha256 } from 'js-sha256';
 import { useServices } from '@shared/lib/services';
 import { env } from '@app/config/env';
-import { deriveSafetyCode } from '../lib/sas';
-import { extractDtlsFingerprint } from '../lib/fingerprint';
 import {
   CallRole,
   CallState,
-  IceCandidate,
+  PeerPayload,
   RoomCode,
-  SignalMessage,
 } from '../model/types';
 import {
   createSignalingChannel,
@@ -19,45 +16,34 @@ import {
 import {
   attachLocalStream,
   createPeerConnection,
-  serializeCandidate,
   serializeDescription,
-  toRTCIceCandidate,
   toRTCSessionDescription,
 } from '../lib/peerConnection';
+import { deriveSafetyCode } from '../lib/sas';
+import { extractDtlsFingerprint } from '../lib/fingerprint';
 
 /**
- * LOGIC LAYER — the call orchestrator.
+ * LOGIC LAYER — the call orchestrator (presence + non-trickle ICE).
  *
- * Wires the peer connection (data) to the signaling channel (transport) and
- * drives the offer/answer/ICE exchange. The UI only reads `state` /
- * `remoteStream` and calls `hangUp`. Roles are fixed (caller offers, callee
- * answers), so we avoid full perfect-negotiation; the only real hazard is the
- * join-order race on an ephemeral broadcast channel, handled by a small
- * "ready" handshake below.
+ * Each peer gathers all ICE candidates first, then publishes a single complete
+ * SDP via presence. The caller offers, the callee answers. Because candidates
+ * are embedded in the SDP, neither side calls `addIceCandidate` — which was
+ * aborting the native WebRTC library on-device.
  */
 export type Call = {
   state: CallState;
   remoteStream: MediaStream | null;
-  /** SAS safety code for out-of-band verification; null until negotiated. */
   safetyCode: string | null;
+  statusDetail: string;
   hangUp: () => void;
 };
 
-/**
- * Minimal, precisely-typed view of the parts of RTCPeerConnection's event API
- * we use. react-native-webrtc's EventTarget base doesn't surface
- * `addEventListener` cleanly through its published types, so we narrow it here
- * rather than reaching for `any`.
- */
-type RawIceCandidate = {
-  candidate: string;
-  sdpMid?: string | null;
-  sdpMLineIndex?: number | null;
-};
+const ICE_GATHER_TIMEOUT_MS = 5000;
+
 type PeerEvents = {
-  addEventListener(t: 'icecandidate', cb: (e: { candidate: RawIceCandidate | null }) => void): void;
   addEventListener(t: 'track', cb: (e: { streams: MediaStream[] }) => void): void;
   addEventListener(t: 'connectionstatechange', cb: () => void): void;
+  addEventListener(t: 'icegatheringstatechange', cb: () => void): void;
 };
 
 type Params = {
@@ -71,14 +57,10 @@ export function useCall({ roomCode, role, localStream }: Params): Call {
   const [state, setState] = useState<CallState>('idle');
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const [safetyCode, setSafetyCode] = useState<string | null>(null);
+  const [statusDetail, setStatusDetail] = useState('');
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const channelRef = useRef<SignalingChannel | null>(null);
-  // Buffer remote ICE that arrives before the remote description is set.
-  const pendingIce = useRef<IceCandidate[]>([]);
-  const remoteReady = useRef(false);
-  const offerMade = useRef(false);
-  const repliedReady = useRef(false);
 
   const cleanup = useCallback(() => {
     pcRef.current?.close();
@@ -88,13 +70,11 @@ export function useCall({ roomCode, role, localStream }: Params): Call {
   }, []);
 
   const hangUp = useCallback(() => {
-    channelRef.current?.send({ kind: 'bye' });
     setState('ended');
     cleanup();
   }, [cleanup]);
 
   useEffect(() => {
-    // Wait until the local camera/mic is ready before negotiating.
     if (!localStream) {
       return;
     }
@@ -107,16 +87,31 @@ export function useCall({ roomCode, role, localStream }: Params): Call {
     const channel = createSignalingChannel(supabase, roomCode);
     channelRef.current = channel;
 
-    const drainIce = async () => {
-      for (const candidate of pendingIce.current) {
-        await pc.addIceCandidate(toRTCIceCandidate(candidate));
-      }
-      pendingIce.current = [];
-    };
+    const events = pc as unknown as PeerEvents;
 
-    // Once both descriptions exist we hold both DTLS fingerprints; hash them
-    // into the SAS code both users compare aloud. SHA-256 keeps it
-    // collision-resistant so a MITM can't forge a matching code.
+    // Resolve once ICE gathering finishes (or after a fallback timeout, so a
+    // single stuck candidate can't block the whole exchange).
+    const waitForGathering = () =>
+      new Promise<void>(resolve => {
+        if (pc.iceGatheringState === 'complete') {
+          resolve();
+          return;
+        }
+        let done = false;
+        const finish = () => {
+          if (!done) {
+            done = true;
+            resolve();
+          }
+        };
+        events.addEventListener('icegatheringstatechange', () => {
+          if (pc.iceGatheringState === 'complete') {
+            finish();
+          }
+        });
+        setTimeout(finish, ICE_GATHER_TIMEOUT_MS);
+      });
+
     const computeSafety = () => {
       const localFp = extractDtlsFingerprint(pc.localDescription?.sdp ?? '');
       const remoteFp = extractDtlsFingerprint(pc.remoteDescription?.sdp ?? '');
@@ -125,92 +120,18 @@ export function useCall({ roomCode, role, localStream }: Params): Call {
       }
     };
 
-    const makeOffer = async () => {
-      if (offerMade.current) {
-        return;
-      }
-      offerMade.current = true;
-      setState('negotiating');
-      const offer = await pc.createOffer({});
-      await pc.setLocalDescription(offer);
-      await channel.send({
-        kind: 'offer',
-        description: serializeDescription(offer),
-      });
-    };
-
-    const handle = async (msg: SignalMessage) => {
-      switch (msg.kind) {
-        case 'ready': {
-          // Echo exactly once so both peers learn of each other regardless of
-          // who subscribed first (broadcast doesn't replay missed messages).
-          if (!repliedReady.current) {
-            repliedReady.current = true;
-            await channel.send({ kind: 'ready' });
-          }
-          if (role === 'caller') {
-            await makeOffer();
-          }
-          break;
-        }
-        case 'offer': {
-          if (role !== 'callee') {
-            break;
-          }
-          setState('negotiating');
-          await pc.setRemoteDescription(
-            toRTCSessionDescription(msg.description),
-          );
-          remoteReady.current = true;
-          await drainIce();
-          const answer = await pc.createAnswer();
-          await pc.setLocalDescription(answer);
-          await channel.send({
-            kind: 'answer',
-            description: serializeDescription(answer),
-          });
-          computeSafety();
-          break;
-        }
-        case 'answer': {
-          if (role !== 'caller') {
-            break;
-          }
-          await pc.setRemoteDescription(
-            toRTCSessionDescription(msg.description),
-          );
-          remoteReady.current = true;
-          await drainIce();
-          computeSafety();
-          break;
-        }
-        case 'ice': {
-          if (remoteReady.current) {
-            await pc.addIceCandidate(toRTCIceCandidate(msg.candidate));
-          } else {
-            pendingIce.current.push(msg.candidate);
-          }
-          break;
-        }
-        case 'bye': {
-          setState('ended');
-          cleanup();
-          break;
-        }
-      }
-    };
-
-    // --- WebRTC event wiring ---
-    const events = pc as unknown as PeerEvents;
-
-    events.addEventListener('icecandidate', event => {
-      if (event.candidate) {
-        channel.send({
-          kind: 'ice',
-          candidate: serializeCandidate(event.candidate),
+    const publishDescription = async () => {
+      const desc = pc.localDescription;
+      if (desc) {
+        await channel.setState({
+          role,
+          desc: serializeDescription(desc),
         });
       }
-    });
+    };
+
+    const offerCreated = { v: false };
+    const remoteApplied = { v: false };
 
     events.addEventListener('track', event => {
       const [incoming] = event.streams;
@@ -221,11 +142,16 @@ export function useCall({ roomCode, role, localStream }: Params): Call {
 
     events.addEventListener('connectionstatechange', () => {
       switch (pc.connectionState) {
+        case 'connecting':
+          setStatusDetail('Connecting media…');
+          break;
         case 'connected':
           setState('connected');
+          setStatusDetail('');
           break;
         case 'failed':
           setState('failed');
+          setStatusDetail('Connection failed');
           break;
         case 'disconnected':
         case 'closed':
@@ -236,36 +162,70 @@ export function useCall({ roomCode, role, localStream }: Params): Call {
       }
     });
 
-    channel.onMessage(msg => {
-      handle(msg);
+    const onPeer = async (peer: PeerPayload | null) => {
+      // Caller: once the peer appears, create an offer, gather, then publish.
+      if (role === 'caller' && peer && !offerCreated.v) {
+        offerCreated.v = true;
+        setState('negotiating');
+        setStatusDetail('Peer found — gathering…');
+        const offer = await pc.createOffer({});
+        await pc.setLocalDescription(offer);
+        await waitForGathering();
+        setStatusDetail('Sending offer');
+        await publishDescription();
+      }
+
+      if (!peer || !peer.desc || remoteApplied.v) {
+        if (!peer) {
+          setState(prev => (prev === 'connected' ? 'ended' : prev));
+        }
+        return;
+      }
+
+      if (role === 'callee' && peer.desc.type === 'offer') {
+        remoteApplied.v = true;
+        setState('negotiating');
+        setStatusDetail('Received offer — answering');
+        await pc.setRemoteDescription(toRTCSessionDescription(peer.desc));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        await waitForGathering();
+        await publishDescription();
+        computeSafety();
+      } else if (role === 'caller' && peer.desc.type === 'answer') {
+        remoteApplied.v = true;
+        setStatusDetail('Received answer');
+        await pc.setRemoteDescription(toRTCSessionDescription(peer.desc));
+        computeSafety();
+      }
+    };
+
+    channel.onPeer(peer => {
+      onPeer(peer);
     });
 
     setState('joining');
+    setStatusDetail('Connecting to signaling server…');
     channel
-      .join()
+      .join({ role, desc: null })
       .then(() => {
         if (!disposed) {
-          // Announce presence; the handshake/echo handles either join order.
-          return channel.send({ kind: 'ready' });
+          setStatusDetail('On server — waiting for peer');
         }
       })
-      .catch(() => {
+      .catch((e: unknown) => {
         if (!disposed) {
+          const msg = e instanceof Error ? e.message : String(e);
+          setStatusDetail(`Server connection failed: ${msg}`);
           setState('failed');
         }
       });
 
     return () => {
-      // pc.close() (in cleanup) detaches native listeners; the JS handlers are
-      // released when this connection instance is dropped.
       disposed = true;
-      pendingIce.current = [];
-      remoteReady.current = false;
-      offerMade.current = false;
-      repliedReady.current = false;
       cleanup();
     };
   }, [localStream, roomCode, role, supabase, cleanup]);
 
-  return { state, remoteStream, safetyCode, hangUp };
+  return { state, remoteStream, safetyCode, statusDetail, hangUp };
 }

@@ -1,57 +1,82 @@
 import { SupabaseClient } from '@supabase/supabase-js';
-import { RoomCode, SignalMessage } from '../model/types';
+import { PeerPayload, RoomCode } from '../model/types';
 
 /**
- * DATA LAYER — signaling transport.
+ * DATA LAYER — signaling transport (presence-based).
  *
- * A thin wrapper over a Supabase Realtime *broadcast* channel. Broadcast
- * messages are ephemeral (never written to the database), which is exactly
- * what handshake data should be — zero rows, zero storage. Once the peers
- * connect, media flows directly P2P and this channel is torn down.
- *
- * It knows nothing about WebRTC; it just ships `SignalMessage`s between peers.
+ * Supabase *broadcast* reception is unreliable in React Native, but *presence*
+ * works. So each peer publishes its full signaling state (offer/answer + ICE)
+ * as its presence payload via `track()`, and reads the other peer's latest
+ * payload on every presence sync. State is cumulative, so the newest snapshot
+ * is authoritative — no ordering or replay concerns.
  */
 export type SignalingChannel = {
-  /** Subscribe and resolve once the channel is joined. */
-  join(): Promise<void>;
-  /** Broadcast a signal to the other peer in the room. */
-  send(message: SignalMessage): Promise<void>;
-  /** Register a handler for incoming signals. Call before `join()`. */
-  onMessage(handler: (message: SignalMessage) => void): void;
-  /** Leave and clean up the channel (removes all listeners). */
+  /** Subscribe, publish initial presence, resolve once joined. */
+  join(initial: PeerPayload): Promise<void>;
+  /** Republish this peer's full state. */
+  setState(payload: PeerPayload): Promise<void>;
+  /** Fires on every presence change with the peer's latest state + member count. */
+  onPeer(handler: (peer: PeerPayload | null, peerCount: number) => void): void;
   leave(): Promise<void>;
 };
 
-const EVENT = 'signal';
+/** Rank a meta by completeness; re-track() appends metas, so the one with a
+ * description (published after gathering) wins over the initial empty one. */
+function completeness(m: PeerPayload): number {
+  return m.desc ? 1 : 0;
+}
 
 export function createSignalingChannel(
   supabase: SupabaseClient,
   roomCode: RoomCode,
 ): SignalingChannel {
+  // Unique presence key per client so two peers count as two members.
+  const presenceKey = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const channel = supabase.channel(`call:${roomCode}`, {
-    config: { broadcast: { self: false, ack: true } },
+    config: { presence: { key: presenceKey } },
   });
 
+  let peerHandler: ((peer: PeerPayload | null, count: number) => void) | null =
+    null;
+
+  const emit = () => {
+    const state = channel.presenceState();
+    const keys = Object.keys(state);
+    const otherKey = keys.find(k => k !== presenceKey);
+    let peer: PeerPayload | null = null;
+    if (otherKey) {
+      const metas = state[otherKey] as unknown as PeerPayload[];
+      peer = metas.reduce(
+        (best, m) => (completeness(m) >= completeness(best) ? m : best),
+        metas[0],
+      );
+    }
+    peerHandler?.(peer, keys.length);
+  };
+
+  channel.on('presence', { event: 'sync' }, emit);
+
   return {
-    join: () =>
+    join: initial =>
       new Promise<void>((resolve, reject) => {
         channel.subscribe(status => {
           if (status === 'SUBSCRIBED') {
-            resolve();
+            channel
+              .track(initial)
+              .then(() => resolve())
+              .catch(() => resolve());
           } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
             reject(new Error(`Signaling channel failed: ${status}`));
           }
         });
       }),
 
-    send: async message => {
-      await channel.send({ type: 'broadcast', event: EVENT, payload: message });
+    setState: async payload => {
+      await channel.track(payload);
     },
 
-    onMessage: handler => {
-      channel.on('broadcast', { event: EVENT }, ({ payload }) => {
-        handler(payload as SignalMessage);
-      });
+    onPeer: handler => {
+      peerHandler = handler;
     },
 
     leave: async () => {

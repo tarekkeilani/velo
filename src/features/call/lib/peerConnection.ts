@@ -31,7 +31,7 @@ export function attachLocalStream(
 }
 
 export function serializeDescription(d: {
-  type: string;
+  type: string | null;
   sdp?: string | null;
 }): SessionDescription {
   return { type: d.type === 'answer' ? 'answer' : 'offer', sdp: d.sdp ?? '' };

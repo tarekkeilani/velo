@@ -32,10 +32,14 @@ export type IceCandidate = {
   sdpMLineIndex?: number | null;
 };
 
-/** Everything that crosses the signaling channel. One tagged union, one event. */
-export type SignalMessage =
-  | { kind: 'ready' } // "I'm in the room" — drives the join handshake
-  | { kind: 'offer'; description: SessionDescription }
-  | { kind: 'answer'; description: SessionDescription }
-  | { kind: 'ice'; candidate: IceCandidate }
-  | { kind: 'bye' };
+/**
+ * Each peer's signaling state, published via Supabase *presence* (reliable in
+ * React Native, unlike broadcast). We use *non-trickle* ICE: a peer gathers all
+ * its ICE candidates first, so `desc` is a complete SDP with candidates already
+ * embedded. The other side only needs `setRemoteDescription` — no per-candidate
+ * `addIceCandidate` calls (which were aborting the native WebRTC lib).
+ */
+export type PeerPayload = {
+  role: CallRole;
+  desc: SessionDescription | null;
+};
