@@ -21,6 +21,7 @@ import {
 } from '../lib/peerConnection';
 import { deriveSafetyCode } from '../lib/sas';
 import { extractDtlsFingerprint } from '../lib/fingerprint';
+import { setSpeakerOn } from '../lib/audioRoute';
 
 /**
  * LOGIC LAYER — the call orchestrator (presence + non-trickle ICE).
@@ -63,6 +64,7 @@ export function useCall({ roomCode, role, localStream }: Params): Call {
   const channelRef = useRef<SignalingChannel | null>(null);
 
   const cleanup = useCallback(() => {
+    setSpeakerOn(false);
     pcRef.current?.close();
     pcRef.current = null;
     channelRef.current?.leave();
@@ -83,6 +85,9 @@ export function useCall({ roomCode, role, localStream }: Params): Call {
     const pc = createPeerConnection(env.iceServers);
     pcRef.current = pc;
     attachLocalStream(pc, localStream);
+
+    // Route call audio to the loudspeaker (default is the earpiece).
+    setSpeakerOn(true);
 
     const channel = createSignalingChannel(supabase, roomCode);
     channelRef.current = channel;
