@@ -1,97 +1,143 @@
-This is a new [**React Native**](https://reactnative.dev) project, bootstrapped using [`@react-native-community/cli`](https://github.com/react-native-community/cli).
+# Velo
 
-# Getting Started
+**Private, end-to-end-encrypted, peer-to-peer video calls — no accounts, no phone numbers.**
 
-> **Note**: Make sure you have completed the [Set Up Your Environment](https://reactnative.dev/docs/set-up-your-environment) guide before proceeding.
+You start a call, get a short code, share it with one person, and your two
+phones connect **directly**. The audio and video are encrypted end-to-end, so
+the conversation stays between the two of you. A short **safety code** shown on
+both phones lets you verify there's no one in the middle.
 
-## Step 1: Start Metro
+---
 
-First, you will need to run **Metro**, the JavaScript build tool for React Native.
+## How it works
 
-To start the Metro dev server, run the following command from the root of your React Native project:
+Velo is a React Native app built on **WebRTC** (the same real-time media engine
+browsers use). The hard part of any calling app is two-fold: (1) getting the
+encrypted media to flow directly between two phones, and (2) helping the two
+phones find each other in the first place ("signaling").
 
-```sh
-# Using npm
-npm start
-
-# OR using Yarn
-yarn start
+```
+  Phone A  ──────────────  encrypted audio/video (WebRTC, P2P)  ──────────────  Phone B
+     │                                                                             │
+     └───────────── signaling (room code + connection info) ───────────────────────┘
+                         via Supabase Realtime "presence"
 ```
 
-## Step 2: Build and run your app
+- **Media** travels **peer-to-peer** and is encrypted in transit with
+  **DTLS-SRTP** (built into WebRTC — it can't be turned off). Velo never sees,
+  records, or stores it.
+- **Signaling** (the brief "let's connect" handshake) rides on **Supabase
+  Realtime presence**. It only carries connection metadata, is ephemeral, and is
+  never written to a database. _(We use presence rather than Supabase
+  "broadcast" because broadcast reception is unreliable in React Native.)_
+- **Trust:** after connecting, both phones derive the same **safety code** from
+  the call's cryptographic fingerprints. Read it aloud — if it matches, no
+  man-in-the-middle. If it differs, hang up.
 
-With Metro running, open a new terminal window/pane from the root of your React Native project, and use one of the following commands to build and run your Android or iOS app:
+### A call, step by step
 
-### Android
+1. **Caller** taps *Start a call* → gets a room code → shares it (any app).
+2. **Callee** enters the code. Both phones join a presence channel keyed by the
+   code.
+3. When each side sees the other present, they exchange a single complete
+   connection description (**non-trickle ICE** — all network candidates are
+   gathered first and embedded in the description).
+4. WebRTC establishes the direct, encrypted connection. Video appears; the
+   **safety code** is shown.
 
-```sh
-# Using npm
-npm run android
+## Project structure
 
-# OR using Yarn
-yarn android
+```
+src/
+  app/                 # composition root: providers, navigation, config
+    config/env.ts      # Supabase URL + publishable key, STUN servers
+    providers/         # dependency-injection of services (Supabase, etc.)
+    navigation/        # Home + Call routes
+  features/call/       # the call feature (Data / Logic / UI separated)
+    lib/               # signalingChannel, peerConnection, sas, fingerprint, audioRoute
+    hooks/             # useLocalMedia (camera/mic), useCall (the orchestrator)
+    ui/                # HomeScreen, CallScreen, SafetyCode, CallControls
+  shared/              # reusable UI kit, theme, DI container
+android/app/src/main/java/com/velo/  # AudioRouteModule (native speaker routing)
 ```
 
-### iOS
+## Prerequisites
 
-For iOS, remember to install CocoaPods dependencies (this only needs to be run on first clone or after updating native deps).
+- **Node ≥ 22**, **JDK 17**
+- **Android:** Android Studio / SDK (build tools), an Android device or emulator
+- **iOS:** Xcode + CocoaPods (`bundle install`) — _note: iOS is not yet tested_
 
-The first time you create a new project, run the Ruby bundler to install CocoaPods itself:
+## Setup
 
+```sh
+npm install
+```
+
+**Supabase:** the app ships pointed at a Supabase project in
+[`src/app/config/env.ts`](src/app/config/env.ts). To use your own project, edit
+that file with your project URL and **publishable** key. No database tables or
+schema are required — signaling uses ephemeral Realtime presence, which is on by
+default. (The publishable key is meant to live in client apps; see *Security*.)
+
+**Android — run on a device/emulator:**
+```sh
+# one-time: point Gradle at your SDK
+echo "sdk.dir=$HOME/Library/Android/sdk" > android/local.properties
+npm start                 # Metro (keep running)
+npm run android           # build + install a debug build
+```
+
+**iOS:**
 ```sh
 bundle install
-```
-
-Then, and every time you update your native dependencies, run:
-
-```sh
-bundle exec pod install
-```
-
-For more information, please visit [CocoaPods Getting Started guide](https://guides.cocoapods.org/using/getting-started.html).
-
-```sh
-# Using npm
+cd ios && bundle exec pod install && cd ..
 npm run ios
-
-# OR using Yarn
-yarn ios
 ```
 
-If everything is set up correctly, you should see your new app running in the Android Emulator, iOS Simulator, or your connected device.
+## Building a release
 
-This is one way to run your app — you can also build it directly from Android Studio or Xcode.
+Signing reads from `android/keystore.properties` (git-ignored). Without it,
+release falls back to the debug key.
 
-## Step 3: Modify your app
+```sh
+cd android
+./gradlew assembleRelease   # → per-ABI APKs (~25–35MB) for sideloading
+./gradlew bundleRelease      # → app-release.aab for the Play Store
+```
 
-Now that you have successfully run the app, let's make changes!
+Outputs land under `android/app/build/outputs/`. See
+[docs/PUBLISHING.md](docs/PUBLISHING.md) for the full Play Store checklist.
 
-Open `App.tsx` in your text editor of choice and make some changes. When you save, your app will automatically update and reflect these changes — this is powered by [Fast Refresh](https://reactnative.dev/docs/fast-refresh).
+## Tests & checks
 
-When you want to forcefully reload, for example to reset the state of your app, you can perform a full reload:
+```sh
+npm test            # Jest (pure logic: safety code, room codes, fingerprints)
+npx tsc --noEmit    # type check
+npm run lint        # eslint
+```
 
-- **Android**: Press the <kbd>R</kbd> key twice or select **"Reload"** from the **Dev Menu**, accessed via <kbd>Ctrl</kbd> + <kbd>M</kbd> (Windows/Linux) or <kbd>Cmd ⌘</kbd> + <kbd>M</kbd> (macOS).
-- **iOS**: Press <kbd>R</kbd> in iOS Simulator.
+## Security model
 
-## Congratulations! :tada:
+- **Calls are end-to-end encrypted** (DTLS-SRTP) and peer-to-peer; the contents
+  never touch a server.
+- **No accounts, no analytics, no stored call data.** See the
+  [privacy policy](https://tarekkeilani.github.io/velo/).
+- **The Supabase key in the repo is the _publishable_ key** — it is designed to
+  be shipped inside client apps (it's in the APK either way) and is safe to be
+  public. The real secrets — the Supabase **service-role/secret key** and the
+  Android **signing keystore** — are **not** in this repo.
+- For a hardened production deployment you would add **Realtime authorization /
+  rate limits** so the publishable key can't be used to abuse your Realtime
+  quota.
 
-You've successfully run and modified your React Native App. :partying_face:
+## Known limitations
 
-### Now what?
+- **No TURN server yet.** Velo uses STUN only, so calls connect directly on most
+  networks but **fail on strict/symmetric NATs** (some mobile carriers, locked-
+  down Wi-Fi). Adding a TURN relay fixes this (at a bandwidth cost).
+- **iOS** is wired but untested.
+- **v1 is anonymous room codes** — no contacts or incoming-call ringing yet.
 
-- If you want to add this new React Native code to an existing application, check out the [Integration guide](https://reactnative.dev/docs/integration-with-existing-apps).
-- If you're curious to learn more about React Native, check out the [docs](https://reactnative.dev/docs/getting-started).
+## License
 
-# Troubleshooting
-
-If you're having issues getting the above steps to work, see the [Troubleshooting](https://reactnative.dev/docs/troubleshooting) page.
-
-# Learn More
-
-To learn more about React Native, take a look at the following resources:
-
-- [React Native Website](https://reactnative.dev) - learn more about React Native.
-- [Getting Started](https://reactnative.dev/docs/environment-setup) - an **overview** of React Native and how setup your environment.
-- [Learn the Basics](https://reactnative.dev/docs/getting-started) - a **guided tour** of the React Native **basics**.
-- [Blog](https://reactnative.dev/blog) - read the latest official React Native **Blog** posts.
-- [`@facebook/react-native`](https://github.com/facebook/react-native) - the Open Source; GitHub **repository** for React Native.
+TBD.
