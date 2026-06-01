@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Velo — Privacy Policy</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      line-height: 1.6; margin: 0; color: #101828; background: #f7f8fa;
+    }
+    .hero {
+      background: linear-gradient(135deg, #0F3A8C 0%, #16E0C8 100%);
+      color: #fff; padding: 48px 24px; text-align: center;
+    }
+    .hero h1 { margin: 0; font-size: 28px; }
+    .hero p { margin: 8px 0 0; opacity: 0.9; }
+    main { max-width: 720px; margin: 0 auto; padding: 24px; }
+    h2 { font-size: 20px; margin-top: 32px; }
+    code { background: rgba(0,0,0,0.06); padding: 2px 6px; border-radius: 4px; }
+    footer { color: #667085; font-size: 13px; padding: 24px; text-align: center; }
+    @media (prefers-color-scheme: dark) {
+      body { background: #0b0f19; color: #f2f4f7; }
+      code { background: rgba(255,255,255,0.1); }
+      footer { color: #98a2b3; }
+    }
+  </style>
+</head>
+<body>
+  <div class="hero">
+    <h1>Velo — Privacy Policy</h1>
+    <p>Last updated: 2026-06-01</p>
+  </div>
+  <main>
+    <p>Velo is a peer-to-peer video calling app, designed to collect and store
+       as little as possible.</p>
+
+    <h2>What Velo does</h2>
+    <p>Velo lets two people make a live, end-to-end-encrypted video call by
+       sharing a short room code. Audio and video travel <strong>directly
+       between the two devices</strong> and are encrypted in transit (WebRTC
+       DTLS-SRTP). Velo does <strong>not</strong> record, store, or have access
+       to the contents of your calls.</p>
+
+    <h2>Data we process</h2>
+    <ul>
+      <li><strong>Camera &amp; microphone</strong> — used only during an active
+        call to capture your live audio and video, sent directly to the other
+        participant. Never recorded or stored by us.</li>
+      <li><strong>Call setup (signaling) data</strong> — to connect two devices,
+        Velo exchanges technical connection details (a room code and WebRTC
+        session/ICE data) through Supabase Realtime. This data is
+        <strong>ephemeral</strong>: used to establish the call, not stored.</li>
+      <li><strong>IP addresses</strong> — inherent to any peer-to-peer call, the
+        two devices learn each other's network addresses to connect. A public
+        STUN server (<code>stun.l.google.com</code>) helps devices discover
+        their own public address and may see your IP as part of this.</li>
+    </ul>
+
+    <h2>What we do NOT do</h2>
+    <ul>
+      <li>No user accounts, names, emails, or contact lists.</li>
+      <li>No analytics, advertising, or tracking SDKs.</li>
+      <li>No selling or sharing of personal data.</li>
+      <li>No recording or server-side storage of call audio/video.</li>
+    </ul>
+
+    <h2>Third-party services</h2>
+    <ul>
+      <li><strong>Supabase</strong> (Realtime) — relays ephemeral call-setup messages.</li>
+      <li><strong>Google STUN</strong> — assists network address discovery for connectivity.</li>
+    </ul>
+
+    <h2>Permissions</h2>
+    <ul>
+      <li><strong>Camera / Microphone</strong> — to make video calls.</li>
+      <li><strong>Network / Wi-Fi state</strong> — required by the WebRTC engine for connectivity.</li>
+    </ul>
+
+    <h2>Children</h2>
+    <p>Velo is not directed to children under 13 (or the minimum age in your region).</p>
+
+    <h2>Contact</h2>
+    <p>Questions about this policy: <strong>CONTACT_EMAIL_PLACEHOLDER</strong></p>
+  </main>
+  <footer>© 2026 Velo</footer>
+</body>
+</html>
