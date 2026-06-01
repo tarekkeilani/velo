@@ -5,11 +5,13 @@ import { RoomCode } from '../model/types';
  * shared out-of-band; it is NOT the security anchor (the SAS safety code is).
  * Even so we want decent entropy so codes aren't guessable.
  *
- * Excludes visually ambiguous characters (0/O, 1/I) for easy reading aloud.
+ * Excludes characters that are easy to confuse when read aloud:
+ *  - visually ambiguous: 0/O, 1/I
+ *  - hard to distinguish by sound: B, F, G, J, P
  */
-const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // 32 symbols → 5 bits each
+const ALPHABET = 'ACDEHKLMNQRSTUVWXYZ23456789'; // 27 symbols
 
-/** 8 symbols ≈ 40 bits of entropy — fine for a short-lived room. */
+/** 8 symbols ≈ 38 bits of entropy — fine for a short-lived room. */
 export function generateRoomCode(length = 8): RoomCode {
   const bytes = randomBytes(length);
   let out = '';

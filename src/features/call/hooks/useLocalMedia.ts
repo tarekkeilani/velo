@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { mediaDevices, MediaStream } from 'react-native-webrtc';
+import { ensureMediaPermissions } from '../lib/permissions';
 
 /**
  * LOGIC LAYER — local media lifecycle.
@@ -31,8 +32,16 @@ export function useLocalMedia(): LocalMedia {
   useEffect(() => {
     let cancelled = false;
 
-    mediaDevices
-      .getUserMedia({ audio: true, video: { facingMode: 'user' } })
+    ensureMediaPermissions()
+      .then(granted => {
+        if (!granted) {
+          throw new Error('Camera/microphone permission denied');
+        }
+        return mediaDevices.getUserMedia({
+          audio: true,
+          video: { facingMode: 'user' },
+        });
+      })
       .then(media => {
         if (cancelled) {
           media.getTracks().forEach(track => track.stop());

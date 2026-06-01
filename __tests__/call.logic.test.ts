@@ -55,11 +55,16 @@ describe('extractDtlsFingerprint', () => {
 });
 
 describe('normalizeRoomCode', () => {
-  test('uppercases and strips spaces/ambiguous chars', () => {
-    expect(normalizeRoomCode('abcd 2345')).toBe('ABCD2345');
+  test('uppercases and strips spaces', () => {
+    expect(normalizeRoomCode('acde 2345')).toBe('ACDE2345');
   });
 
-  test('drops characters outside the alphabet (0, 1, O, I)', () => {
-    expect(normalizeRoomCode('A0B1C')).toBe('ABC');
+  test('drops visually ambiguous chars (0, 1, O, I)', () => {
+    expect(normalizeRoomCode('A0K1C')).toBe('AKC');
+  });
+
+  test('drops hard-to-pronounce letters (B, F, G, J, P)', () => {
+    expect(normalizeRoomCode('BFGJP')).toBe('');
+    expect(normalizeRoomCode('KLMN')).toBe('KLMN');
   });
 });

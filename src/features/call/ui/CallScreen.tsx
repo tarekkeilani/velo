@@ -1,5 +1,5 @@
 import React from 'react';
-import { StyleSheet, View } from 'react-native';
+import { Pressable, Share, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { RTCView } from 'react-native-webrtc';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -24,7 +24,7 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Call'>;
 export function CallScreen({ route, navigation }: Props) {
   const { roomCode, role } = route.params;
   const local = useLocalMedia();
-  const { state, remoteStream, safetyCode, hangUp } = useCall({
+  const { state, remoteStream, safetyCode, statusDetail, hangUp } = useCall({
     roomCode,
     role,
     localStream: local.stream,
@@ -36,6 +36,12 @@ export function CallScreen({ route, navigation }: Props) {
     hangUp();
     local.stream?.getTracks().forEach(t => t.stop());
     navigation.goBack();
+  };
+
+  const shareCode = () => {
+    Share.share({
+      message: `Join my secure Velo video call. Code: ${formatCode(roomCode)}`,
+    });
   };
 
   return (
@@ -87,12 +93,26 @@ export function CallScreen({ route, navigation }: Props) {
                 : 'Joining room'}
           </Text>
           {!connected ? (
-            <Text variant="heading" style={styles.onVideo}>
-              {formatCode(roomCode)}
-            </Text>
+            <View style={styles.codeRow}>
+              <Text variant="heading" style={styles.onVideo}>
+                {formatCode(roomCode)}
+              </Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Share call code"
+                onPress={shareCode}
+                hitSlop={10}
+                style={styles.shareBtn}
+              >
+                <Text style={styles.shareLabel}>Share ↗</Text>
+              </Pressable>
+            </View>
           ) : null}
           <Text variant="caption" style={styles.onVideoMuted}>
             {statusLabel(state)}
+          </Text>
+          <Text variant="caption" style={styles.onVideoMuted}>
+            {statusDetail}
           </Text>
           {state === 'connected' || state === 'negotiating' ? (
             <SafetyCode code={safetyCode} />
@@ -150,8 +170,27 @@ const styles = StyleSheet.create({
   center: { alignItems: 'center', justifyContent: 'center' },
   overlay: { flex: 1, justifyContent: 'space-between' },
   topBar: { padding: 16, gap: 2 },
-  onVideo: { color: '#fff' },
-  onVideoMuted: { color: 'rgba(255,255,255,0.7)' },
+  onVideo: {
+    color: '#fff',
+    // Black halo so the code stays legible over any video background.
+    textShadowColor: '#000',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
+  },
+  onVideoMuted: {
+    color: 'rgba(255,255,255,0.85)',
+    textShadowColor: '#000',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+  },
+  codeRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  shareBtn: {
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    borderRadius: 10,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+  },
+  shareLabel: { color: '#fff', fontWeight: '600' },
   pip: {
     position: 'absolute',
     top: 56,
